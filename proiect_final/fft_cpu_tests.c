@@ -98,7 +98,31 @@ void real_fft_test() {
         printf("%f + i%f, ", test_arr[i], test_arr[i+4]);
     }
     printf("\n");
-    printf("Expected: 10. + i14., -4. + i0., -2. i-2.,  0. i-4.\n");
+    printf("Expected: 10. + i14., -2. + i-2., -2. i-2.,  0. i-4.\n");
+    printf("\n");
+    free(test_arr);
+}
+
+void column_real_fft_test() {
+    printf("Column real fft test:\n");
+
+    float *test_arr = (float *)malloc(8 * sizeof(float));
+    for (int i = 0; i < 4; i++) {
+        test_arr[i*2] = i+1;
+        test_arr[i*2+1] = i+2;
+    }
+    printf("a: ");
+    for (int i = 0; i < 4; i++) {
+        printf("%f + i%f, ", test_arr[i*2], test_arr[i*2+1]);
+    }
+    printf("\n");
+    real_pair_fft(test_arr, test_arr + 1, 4, 2);
+    printf("A: ");
+    for (int i = 0; i < 4; i++) {
+        printf("%f + i%f, ", test_arr[i*2], test_arr[i*2+1]);
+    }
+    printf("\n");
+    printf("Expected: 10. + i14., -2. + i-2., -2. i-2.,  0. i-4.\n");
     printf("\n");
     free(test_arr);
 }
@@ -111,6 +135,7 @@ int main() {
     complex_fft_test();
     column_complex_fft_test();
     real_fft_test();
+    column_real_fft_test();
 
     return 0;
 }

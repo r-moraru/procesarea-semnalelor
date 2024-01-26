@@ -131,9 +131,9 @@ uint32_t log_of_pow_of_2(uint32_t num) {
     }
 }
 
-void scale(float *row, const uint32_t N, const float scalar) {
+void scale(float *row, const uint32_t N, uint32_t index_multiplier, const float scalar) {
     for (int i = 0; i < N; i++) {
-        row[i] *= scalar;
+        row[i * index_multiplier] *= scalar;
     }
 }
 
@@ -179,10 +179,11 @@ int complex_fft(float *real, float *imag, const uint32_t N, const uint32_t index
 
 void detangle_and_pack(float *row1, float *row2, const uint32_t N, const uint32_t index_multiplier) {
     register float Fr, Fi, Gr, Gi;
+    // printf("N = %d\n", N);
     for (int i = 1; i < N/2; i++) {
-        printf("Splitting at index %d and %d\n", i * index_multiplier, (N-i) * index_multiplier);
+        // printf("Splitting at index %d and %d\n", i * index_multiplier, (N-i) * index_multiplier);
         Fr = (row1[i * index_multiplier] + row1[(N-i) * index_multiplier]) / 2;
-        printf("Fr = %f + %f = %f\n", row1[i * index_multiplier], row1[(N-i) * index_multiplier], Fr);
+        // printf("Fr = %f + %f = %f\n", row1[i * index_multiplier], row1[(N-i) * index_multiplier], Fr);
         Fi = (row2[i * index_multiplier] - row2[(N-i) * index_multiplier]) / 2;
         Gr = (row2[i * index_multiplier] + row2[(N-i) * index_multiplier]) / 2;
         Gi = -(row1[i * index_multiplier] - row1[(N-i) * index_multiplier]) / 2;
@@ -209,10 +210,38 @@ int matrix_fft(float *matrix, uint32_t rows, uint32_t cols) {
         real_pair_fft(matrix + row*cols, matrix + (row+1)*cols, cols, 1);
     }
 
-    real_pair_fft(matrix, matrix + (cols/2)*rows, rows, cols);
+    // printf("Matrix after row fft.\n");
+    // for (int i = 0; i < rows; i++) {
+    //     for (int j = 0; j < cols; j++) {
+    //         printf("%f\t", matrix[i*cols + j]);
+    //     }
+    //     printf("\n");
+    // }
+    // printf("\n");
+
+    // printf("Column\n");
+    real_pair_fft(matrix, matrix + cols/2, rows, cols);
+    // printf("Matrix after real column fft.\n");
+    // for (int i = 0; i < rows; i++) {
+    //     for (int j = 0; j < cols; j++) {
+    //         printf("%f\t", matrix[i*cols + j]);
+    //     }
+    //     printf("\n");
+    // }
+    // printf("\n");
+
     for (int col = 1; col < cols/2; col++) {
-        complex_fft(matrix + col*rows, matrix + (cols-col)*rows, rows, cols);
+        complex_fft(matrix + col, matrix + cols-col, rows, cols);
     }
+
+    // printf("Matrix after column fft.\n");
+    // for (int i = 0; i < rows; i++) {
+    //     for (int j = 0; j < cols; j++) {
+    //         printf("%f\t", matrix[i*cols + j]);
+    //     }
+    //     printf("\n");
+    // }
+    // printf("\n");
 
     return 0;
 }
