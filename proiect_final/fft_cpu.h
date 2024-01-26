@@ -3,6 +3,7 @@
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <time.h>
 
 #include "shared_defs.h"
 
@@ -198,6 +199,7 @@ void real_pair_fft(float *row1, float *row2, const uint32_t len, const uint32_t 
 }
 
 int matrix_fft(float *matrix, uint32_t rows, uint32_t cols) {
+    float startTime = (float)clock()/CLOCKS_PER_SEC, endTime;
     if (!is_power_of_2(rows) || !is_power_of_2(cols)) {
         fprintf(stderr, "The image dimensions must be a power of 2.\n");
         return -1;
@@ -212,6 +214,32 @@ int matrix_fft(float *matrix, uint32_t rows, uint32_t cols) {
     for (int col = 1; col < cols/2; col++) {
         complex_fft(matrix + col, matrix + cols-col, rows, cols);
     }
+
+    endTime = (float)clock()/CLOCKS_PER_SEC;
+    printf("%d by %d image FFT calculated in %f seconds.\n", rows, cols, endTime-startTime);
+
+    return 0;
+}
+
+int threaded_matrix_fft(float *matrix, uint32_t rows, uint32_t cols) {
+    float startTime = (float)clock()/CLOCKS_PER_SEC, endTime;
+    if (!is_power_of_2(rows) || !is_power_of_2(cols)) {
+        fprintf(stderr, "The image dimensions must be a power of 2.\n");
+        return -1;
+    }
+
+    for (int row = 0; row < rows; row += 2) {
+        real_pair_fft(matrix + row*cols, matrix + (row+1)*cols, cols, 1);
+    }
+
+    real_pair_fft(matrix, matrix + cols/2, rows, cols);
+
+    for (int col = 1; col < cols/2; col++) {
+        complex_fft(matrix + col, matrix + cols-col, rows, cols);
+    }
+
+    endTime = (float)clock()/CLOCKS_PER_SEC;
+    printf("%d by %d image FFT calculated in %f seconds.\n", rows, cols, endTime-startTime);
 
     return 0;
 }
