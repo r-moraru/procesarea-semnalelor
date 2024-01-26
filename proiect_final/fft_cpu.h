@@ -49,7 +49,7 @@ int get_color(uint8_t *image_color, const uint32_t rows, const uint32_t cols, co
 
     objects_read = fread(image_color, sizeof(*image_color), rows*cols, fileptr);
     if (objects_read != rows*cols) {
-        fprintf(stderr, "Could not read all bytes from %s. Bytes read: %d, Expected: %d\n",
+        fprintf(stderr, "Could not read all bytes from %s. Bytes read: %ld, Expected: %d\n",
                 color_file, objects_read, rows*cols);
         return -1;
     }
@@ -77,7 +77,7 @@ int write_fft(float *matrix, const uint32_t rows, const uint32_t cols, const cha
 
     objects_written = fwrite(matrix, sizeof(*matrix), rows*cols, fileptr);
     if (objects_written != rows*cols) {
-        fprintf(stderr, "Could not read all bytes from %s. Bytes read: %d, Expected: %d\n",
+        fprintf(stderr, "Could not read all bytes from %s. Bytes read: %ld, Expected: %d\n",
                 matrix_file, objects_written, rows*cols);
         return -1;
     }
