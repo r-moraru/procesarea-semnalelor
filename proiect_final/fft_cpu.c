@@ -55,12 +55,22 @@ int main() {
         }
     }
 
+    printf("CPU sequential FFT:\n");
     if (matrix_fft(image_rf, rows, cols) != 0 ||
             matrix_fft(image_gf, rows, cols) != 0 ||
             matrix_fft(image_bf, rows, cols) != 0) {
         fprintf(stderr, "Error calculating fft.\n");
         return -1;
     }
+    printf("\n");
+
+    // printf("CPU Threaded FFT:\n");
+    // if (threaded_matrix_fft(image_rf, rows, cols) != 0 ||
+    //         threaded_matrix_fft(image_gf, rows, cols) != 0 ||
+    //         threaded_matrix_fft(image_bf, rows, cols) != 0) {
+    //     fprintf(stderr, "Error calculating fft.\n");
+    //     return -1;
+    // }
 
     printf("writing.\n");
     write_fft(image_rf, rows, cols, FFT_R_FILENAME);
