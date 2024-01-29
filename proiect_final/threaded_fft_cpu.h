@@ -42,18 +42,59 @@ typedef struct {
     float *imag;
     float *a_real;
     float *a_imag;
-
-    uint32_t pow_2_i;
+    uint32_t start_index;
+    uint32_t end_index;
     uint32_t N;
     uint32_t index_multiplier;
-} run_complex_fft_block_t; 
+    pthread_barrier_t *barrier;
+} complex_fft_payload_t;
+
+void *run_complex_fft_block(void *vargp) {
+    complex_fft_payload_t *payload = (complex_fft_payload_t *)vargp;
+    uint32_t u, iterations, pow_2_i, N;
+    float sin_u, cos_u;
+
+    N = payload->N;
+    iterations = log_of_pow_of_2(payload->N);
+    for (int i = 1; i <= iterations; i++) {
+        pow_2_i = pow(2, i);
+        for (int n = payload->start_index; n < payload->end_index; n++) {
+            u = n / (payload->N/pow_2_i);
+            sin_u = sin(-2*(u*pi/pow_2_i));
+            cos_u = cos(-2*(u*pi/pow_2_i));
+            payload->a_real[n] =
+                    payload->real[(n + u*N/pow_2_i) % N * payload->index_multiplier] +
+                    payload->real[(n + u*N/pow_2_i + N/pow_2_i) % N * payload->index_multiplier]*cos_u -
+                    payload->imag[(n + u*N/pow_2_i + N/pow_2_i) % N * payload->index_multiplier]*sin_u;
+            payload->a_imag[n] =
+                    payload->imag[(n + u*N/pow_2_i) % N * payload->index_multiplier] +
+                    payload->imag[(n + u*N/pow_2_i + N/pow_2_i) % N * payload->index_multiplier]*cos_u +
+                    payload->real[(n + u*N/pow_2_i + N/pow_2_i) % N * payload->index_multiplier]*sin_u;
+        }
+        pthread_barrier_wait(payload->barrier);
+
+        for(int n = payload->start_index; n < payload->end_index; n++) {
+            payload->real[n * payload->index_multiplier] = payload->a_real[n];
+            payload->imag[n * payload->index_multiplier] = payload->a_imag[n];
+        }
+        pthread_barrier_wait(payload->barrier);
+    }
+
+    free(payload);
+    pthread_exit(NULL);
+}
 
 int threaded_complex_fft(float *real, float *imag, const uint32_t N,
         const uint32_t index_multiplier, const uint32_t elements_per_thread) {
-    float *a_real, *a_imag;
-    uint32_t u, pow_2_i, iterations;
-    float sin_u, cos_u;
+    int i, t, num_threads = N / elements_per_thread;
+    pthread_t *thread_pool =
+            (pthread_t *)malloc(num_threads * sizeof(pthread_t));
+    if (thread_pool == NULL) {
+        fprintf(stderr, "Unable to allocate memory for thread pool.\n");
+        return -1;
+    }
 
+    float *a_real, *a_imag;
     a_real = (float *)malloc(N*sizeof(*a_real));
     if (a_real == NULL) {
         return -1;
@@ -63,28 +104,40 @@ int threaded_complex_fft(float *real, float *imag, const uint32_t N,
         return -1;
     }
 
-    iterations = log_of_pow_of_2(N);
-    for (int i = 1; i <= iterations; i++) {
-        pow_2_i = pow(2, i);
-        for (int n = 0; n < N; n++) {
-            u = n / (N/pow_2_i);
-            sin_u = sin(-2*(u*pi/pow_2_i));
-            cos_u = cos(-2*(u*pi/pow_2_i));
-            a_real[n] =
-                    real[(n + u*N/pow_2_i) % N * index_multiplier] +
-                    real[(n + u*N/pow_2_i + N/pow_2_i) % N * index_multiplier]*cos_u -
-                    imag[(n + u*N/pow_2_i + N/pow_2_i) % N * index_multiplier]*sin_u;
-            a_imag[n] =
-                    imag[(n + u*N/pow_2_i) % N * index_multiplier] +
-                    imag[(n + u*N/pow_2_i + N/pow_2_i) % N * index_multiplier]*cos_u +
-                    real[(n + u*N/pow_2_i + N/pow_2_i) % N * index_multiplier]*sin_u;
+    pthread_barrier_t barrier;
+    pthread_barrier_init(&barrier, NULL, num_threads);
+
+    for (i = 0, t = 0; i < N; i += elements_per_thread, t++) {
+        complex_fft_payload_t *payload =
+                (complex_fft_payload_t *)malloc(sizeof(complex_fft_payload_t));
+        if (payload == NULL) {
+            fprintf(stderr, "Failed to initialize thread.\n");
+            return -1;
         }
-        for(int n = 0; n < N; n++) {
-            real[n * index_multiplier] = a_real[n];
-            imag[n * index_multiplier] = a_imag[n];
+        payload->real = real;
+        payload->imag = imag;
+        payload->a_real = a_real;
+        payload->a_imag = a_imag;
+        payload->start_index = i;
+        payload->end_index = i+elements_per_thread;
+        payload->N = N;
+        payload->index_multiplier = index_multiplier;
+        payload->barrier = &barrier;
+        if (pthread_create(thread_pool+t, NULL, run_complex_fft_block, payload) != 0) {
+            fprintf(stderr, "Error creating thread.\n");
+            return -1;
         }
     }
 
+    for (t = 0; t < num_threads; t++) {
+        if (pthread_join(thread_pool[t], NULL)) {
+            fprintf(stderr, "Error joining thread.\n");
+            return -1;
+        }
+    }
+
+    pthread_barrier_destroy(&barrier);
+    free(thread_pool);
     free(a_real);
     free(a_imag);
 
@@ -94,12 +147,13 @@ int threaded_complex_fft(float *real, float *imag, const uint32_t N,
 int threaded_untangle_and_pack(float *row1, float *row2, const uint32_t N,
         const uint32_t index_multiplier, const uint32_t elements_per_thread) {
     float Fr, Fi, Gr, Gi;
-    // pthread_t *thread_pool =
-    //         (pthread_t *)malloc((N / elements_per_thread) * sizeof(pthread_t));
-    // if (thread_pool == NULL) {
-    //     fprintf(stderr, "Unable to allocate memory for thread pool.\n");
-    //     return -1;
-    // }
+    pthread_t *thread_pool =
+            (pthread_t *)malloc((N / elements_per_thread) * sizeof(pthread_t));
+    if (thread_pool == NULL) {
+        fprintf(stderr, "Unable to allocate memory for thread pool.\n");
+        return -1;
+    }
+
     for (int i = 1; i < N/2; i++) {
         Fr = (row1[i * index_multiplier] + row1[(N-i) * index_multiplier]) / 2;
         Fi = (row2[i * index_multiplier] - row2[(N-i) * index_multiplier]) / 2;
@@ -111,6 +165,8 @@ int threaded_untangle_and_pack(float *row1, float *row2, const uint32_t N,
         row2[i * index_multiplier] = Gr;
         row2[(N-i) * index_multiplier] = Gi;
     }
+
+    free(thread_pool);
 
     return 0;
 }

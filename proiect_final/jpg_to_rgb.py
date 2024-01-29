@@ -4,7 +4,7 @@ import numpy as np
 img = cv2.imread('resources/poza.JPG')
 print(type(img[:, :, 0].shape[0]))
 
-cropped_rows, cropped_cols = 512, 512
+cropped_rows, cropped_cols = 2048, 2048
 
 with open('resources/img.shape', "bw+") as f:
     f.write(cropped_rows.to_bytes(4, 'little'))
