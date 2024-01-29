@@ -3,6 +3,7 @@
 #include <malloc.h>
 
 #include "fft_cpu.h"
+#include "threaded_fft_cpu.h"
 
 int main() {
     uint32_t rows, cols;
@@ -64,13 +65,22 @@ int main() {
     }
     printf("\n");
 
-    // printf("CPU Threaded FFT:\n");
-    // if (threaded_matrix_fft(image_rf, rows, cols) != 0 ||
-    //         threaded_matrix_fft(image_gf, rows, cols) != 0 ||
-    //         threaded_matrix_fft(image_bf, rows, cols) != 0) {
-    //     fprintf(stderr, "Error calculating fft.\n");
-    //     return -1;
-    // }
+    for (int i = 0; i < rows; i++) {
+        for (int j = 0; j < cols; j++) {
+            image_rf[i*cols+j] = image_r[i*cols+j];
+            image_gf[i*cols+j] = image_g[i*cols+j];
+            image_bf[i*cols+j] = image_b[i*cols+j];
+        }
+    }
+
+    printf("CPU Threaded FFT:\n");
+    printf("Address of matrix: %p\n", image_rf);
+    if (threaded_matrix_fft(image_rf, rows, cols) != 0 ||
+            threaded_matrix_fft(image_gf, rows, cols) != 0 ||
+            threaded_matrix_fft(image_bf, rows, cols) != 0) {
+        fprintf(stderr, "Error calculating fft.\n");
+        return -1;
+    }
 
     printf("writing.\n");
     write_fft(image_rf, rows, cols, FFT_R_FILENAME);

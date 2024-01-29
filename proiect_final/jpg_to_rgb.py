@@ -1,16 +1,15 @@
 import cv2
 import numpy as np
 
-img = cv2.imread('resources/poza.jpg')
+img = cv2.imread('resources/poza.JPG')
 print(type(img[:, :, 0].shape[0]))
 
-cropped_rows, cropped_cols = 1024, 2048
+cropped_rows, cropped_cols = 512, 512
 
 with open('resources/img.shape', "bw+") as f:
     f.write(cropped_rows.to_bytes(4, 'little'))
     f.write(cropped_cols.to_bytes(4, 'little'))
 
-# TODO: crop to power of 2 rows, cols
 rows, cols = img.shape[0], img.shape[1]
 
 rows_start = rows//2 - cropped_rows//2
