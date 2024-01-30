@@ -1,7 +1,6 @@
 #include <inttypes.h>
 #include <malloc.h>
 #include <math.h>
-#include <pthread.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <time.h>

@@ -71,12 +71,14 @@ void *run_complex_fft_block(void *vargp) {
                     payload->imag[(n + u*N/pow_2_i + N/pow_2_i) % N * payload->index_multiplier]*cos_u +
                     payload->real[(n + u*N/pow_2_i + N/pow_2_i) % N * payload->index_multiplier]*sin_u;
         }
+
         pthread_barrier_wait(payload->barrier);
 
         for(int n = payload->start_index; n < payload->end_index; n++) {
             payload->real[n * payload->index_multiplier] = payload->a_real[n];
             payload->imag[n * payload->index_multiplier] = payload->a_imag[n];
         }
+
         pthread_barrier_wait(payload->barrier);
     }
 
@@ -144,29 +146,114 @@ int threaded_complex_fft(float *real, float *imag, const uint32_t N,
     return 0;
 }
 
+typedef struct {
+    float *row1;
+    float *row2;
+    float *Fi;
+    float *Fr;
+    float *Gi;
+    float *Gr;
+    uint32_t start_index;
+    uint32_t end_index;
+    uint32_t N;
+    uint32_t index_multiplier;
+    pthread_barrier_t *barrier;
+} untangle_and_pack_payload_t;
+
+void *untangle_and_pack_block(void *vargp) {
+    untangle_and_pack_payload_t *payload = (untangle_and_pack_payload_t *)vargp;
+    uint32_t index_multiplier = payload->index_multiplier;
+    uint32_t N = payload->N;
+    float *row1 = payload->row1, *row2 = payload->row2;
+
+    if (payload->start_index == 0) {
+        payload->start_index = 1;
+    }
+
+    for (int i = payload->start_index; i < payload->end_index; i++) {
+        payload->Fr[i] = (row1[i * index_multiplier] + row1[(N-i) * index_multiplier]) / 2;
+        payload->Fi[i] = (row2[i * index_multiplier] - row2[(N-i) * index_multiplier]) / 2;
+        payload->Gr[i] = (row2[i * index_multiplier] + row2[(N-i) * index_multiplier]) / 2;
+        payload->Gi[i] = -(row1[i * index_multiplier] - row1[(N-i) * index_multiplier]) / 2;
+    }
+
+    for (int i = payload->start_index; i < payload->end_index; i++) {
+        row1[i * index_multiplier] = payload->Fr[i];
+        row1[(N-i) * index_multiplier] = payload->Fi[i];
+        row2[i * index_multiplier] = payload->Gr[i];
+        row2[(N-i) * index_multiplier] = payload->Gi[i];
+    }
+
+    free(payload);
+    pthread_exit(NULL);
+}
+
 int threaded_untangle_and_pack(float *row1, float *row2, const uint32_t N,
         const uint32_t index_multiplier, const uint32_t elements_per_thread) {
-    float Fr, Fi, Gr, Gi;
+    float *Fr, *Fi, *Gr, *Gi;
+    Fr = (float *)malloc(sizeof(*Fr) * (N/2));
+    if (Fr == NULL) {
+        return -1;
+    }
+    Fi = (float *)malloc(sizeof(*Fi) * (N/2));
+    if (Fr == NULL) {
+        return -1;
+    }
+    Gr = (float *)malloc(sizeof(*Gr) * (N/2));
+    if (Fr == NULL) {
+        return -1;
+    }
+    Gi = (float *)malloc(sizeof(*Gi) * (N/2));
+    if (Fr == NULL) {
+        return -1;
+    }
+    int i, t, num_threads = N / elements_per_thread;
     pthread_t *thread_pool =
-            (pthread_t *)malloc((N / elements_per_thread) * sizeof(pthread_t));
+            (pthread_t *)malloc(num_threads * sizeof(pthread_t));
     if (thread_pool == NULL) {
         fprintf(stderr, "Unable to allocate memory for thread pool.\n");
         return -1;
     }
+    pthread_barrier_t barrier;
+    pthread_barrier_init(&barrier, NULL, num_threads);
 
-    for (int i = 1; i < N/2; i++) {
-        Fr = (row1[i * index_multiplier] + row1[(N-i) * index_multiplier]) / 2;
-        Fi = (row2[i * index_multiplier] - row2[(N-i) * index_multiplier]) / 2;
-        Gr = (row2[i * index_multiplier] + row2[(N-i) * index_multiplier]) / 2;
-        Gi = -(row1[i * index_multiplier] - row1[(N-i) * index_multiplier]) / 2;
-
-        row1[i * index_multiplier] = Fr;
-        row1[(N-i) * index_multiplier] = Fi;
-        row2[i * index_multiplier] = Gr;
-        row2[(N-i) * index_multiplier] = Gi;
+    for (i = 0, t = 0; i < N/2; i += elements_per_thread/2, t++) {
+        untangle_and_pack_payload_t *payload =
+                (untangle_and_pack_payload_t *)malloc(sizeof(untangle_and_pack_payload_t));
+        if (payload == NULL) {
+            fprintf(stderr, "Failed to initialize thread.\n");
+            return -1;
+        }
+        payload->row1 = row1;
+        payload->row2 = row2;
+        payload->Fi = Fi;
+        payload->Fr = Fr;
+        payload->Gi = Gi;
+        payload->Gr = Gr;
+        payload->start_index = i;
+        payload->end_index = i + elements_per_thread/2;
+        payload->N = N;
+        payload->index_multiplier = index_multiplier;
+        payload->barrier = &barrier;
+        if (pthread_create(thread_pool+t, NULL, untangle_and_pack_block, payload) != 0) {
+            fprintf(stderr, "Error creating thread.\n");
+            return -1;
+        }
     }
 
+    for (t = 0; t < num_threads; t++) {
+        if (pthread_join(thread_pool[t], NULL)) {
+            fprintf(stderr, "Error joining thread.\n");
+            return -1;
+        }
+    }
+
+    pthread_barrier_destroy(&barrier);
     free(thread_pool);
+    free(Fr);
+    free(Fi);
+    free(Gr);
+    free(Gi);
 
     return 0;
 }
@@ -235,6 +322,7 @@ int threaded_matrix_fft(float *matrix, uint32_t rows, uint32_t cols) {
     long number_of_processors = sysconf(_SC_NPROCESSORS_ONLN);
     printf("Active processors: %ld\n", number_of_processors);
     long number_of_threads = greater_power_of_2(number_of_processors);
+    number_of_threads = 4;
     
     uint32_t pixels_per_thread = max(4, (rows*cols)/number_of_threads);
     printf("pixels per thread %u\n", pixels_per_thread);
