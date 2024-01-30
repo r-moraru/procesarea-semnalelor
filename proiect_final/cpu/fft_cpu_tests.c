@@ -1,3 +1,6 @@
+/*
+ * The tests in this file might be outdated.
+ */
 #include "fft_cpu.h"
 
 void is_power_of_2_test() {
