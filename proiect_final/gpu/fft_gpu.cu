@@ -50,14 +50,13 @@ __global__ void complex_fft_iteration(float *real, float *imag, const uint32_t N
 }
 
 void complex_fft(float *real, float *imag, const uint32_t N, const uint32_t index_multiplier) {
-    dim3 threads_per_block(N, 1);
-    dim3 num_blocks(1);
+    dim3 threads_per_block(min(1024, N), 1);
+    dim3 num_blocks(max(1, N/1024));
     void *params[4];
     params[0] = (void *)&real;
     params[1] = (void *)&imag;
     params[2] = (void *)&N;
     params[3] = (void *)&index_multiplier;
-    // TODO: split N if it is too large
     cudaLaunchCooperativeKernel(complex_fft_iteration, num_blocks, threads_per_block, params, 0, cudaStreamDefault);
 }
 
@@ -80,7 +79,10 @@ __global__ void untangle_and_pack(float *row1, float *row2, const uint32_t N,
 
 void real_pair_fft(float *row1, float *row2, const uint32_t len, const uint32_t index_multiplier) {
     complex_fft(row1, row2, len, index_multiplier);
-    untangle_and_pack<<<1, len/2-1>>>(row1, row2, len, index_multiplier);
+    int N = len/2-1;
+    dim3 threads_per_block(min(1024, N), 1);
+    dim3 num_blocks(max(1, N/1024));
+    untangle_and_pack<<<num_blocks, threads_per_block>>>(row1, row2, len, index_multiplier);
 }
 
 int matrix_fft(float *matrix, uint32_t rows, uint32_t cols) {
