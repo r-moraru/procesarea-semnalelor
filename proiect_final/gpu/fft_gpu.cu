@@ -58,7 +58,6 @@ void complex_fft(float *real, float *imag, const uint32_t N, const uint32_t inde
     params[2] = (void *)&N;
     params[3] = (void *)&index_multiplier;
     // TODO: split N if it is too large
-    // complex_fft_iteration<<<1, N>>>(real, imag, N, index_multiplier);
     cudaLaunchCooperativeKernel(complex_fft_iteration, num_blocks, threads_per_block, params, 0, cudaStreamDefault);
 }
 
@@ -103,6 +102,7 @@ int matrix_fft(float *matrix, uint32_t rows, uint32_t cols) {
     }
 
     endTime = (float)clock()/CLOCKS_PER_SEC;
+    cudaDeviceSynchronize();
     printf("%d by %d image FFT calculated in %f seconds.\n", rows, cols, endTime-startTime);
     return 0;
 }
@@ -178,53 +178,60 @@ int main() {
 
     float *gpu_image_rf, *gpu_image_gf, *gpu_image_bf;
 
-    if ((gpu_image_rf = copy_matrix_to_gpu(image_rf, rows, cols)) == NULL ||
-        (gpu_image_gf = copy_matrix_to_gpu(image_gf, rows, cols)) == NULL ||
-        (gpu_image_bf = copy_matrix_to_gpu(image_bf, rows, cols)) == NULL) {
+    if ((gpu_image_rf = copy_matrix_to_gpu(image_rf, rows, cols)) == NULL) {
         return -1;
     }
-
-    printf("CPU sequential FFT:\n");
-    if (matrix_fft(gpu_image_rf, rows, cols) != 0 ||
-            matrix_fft(gpu_image_gf, rows, cols) != 0 ||
-            matrix_fft(gpu_image_bf, rows, cols) != 0) {
+    printf("GPU FFT:\n");
+    if (matrix_fft(gpu_image_rf, rows, cols) != 0) {
         fprintf(stderr, "Error calculating fft.\n");
         return -1;
     }
-    printf("\n");
-
-    cudaError err = cudaGetLastError();
-    if (cudaSuccess != err) {
-        printf("%s\n", cudaGetErrorString(err));
-    }
-
-    cudaDeviceSynchronize();
-
-    err = cudaGetLastError();
-    if (cudaSuccess != err) {
-        printf("%s\n", cudaGetErrorString(err));
-    }
-
     cudaError_t cuda_error = cudaMemcpy((void *)image_rf, (void *)gpu_image_rf, sizeof(*image_rf)*rows*cols,
                     cudaMemcpyDeviceToHost);
     if (cuda_error != cudaSuccess) {
         fprintf(stderr, "Unable to copy results from GPU to host. cuda error: %d\n", cuda_error);
-        // return -1;
+        return -1;
     }
+    printf("\n");
+    cudaFree(gpu_image_rf);
 
-    err = cudaGetLastError();
-    if (cudaSuccess != err) {
-        printf("%s\n", cudaGetErrorString(err));
+    if ((gpu_image_gf = copy_matrix_to_gpu(image_gf, rows, cols)) == NULL) {
+        return -1;
     }
+    if (matrix_fft(gpu_image_gf, rows, cols) != 0) {
+        fprintf(stderr, "Error calculating fft.\n");
+        return -1;
+    }
+    
+    cuda_error = cudaMemcpy((void *)image_gf, (void *)gpu_image_gf, sizeof(*image_gf)*rows*cols,
+                    cudaMemcpyDeviceToHost);
+    if (cuda_error != cudaSuccess) {
+        fprintf(stderr, "Unable to copy results from GPU to host. cuda error: %d\n", cuda_error);
+        return -1;
+    }
+    printf("\n");
+    cudaFree(gpu_image_gf);
+
+    if ((gpu_image_bf = copy_matrix_to_gpu(image_bf, rows, cols)) == NULL) {
+        return -1;
+    }
+    if (matrix_fft(gpu_image_bf, rows, cols) != 0) {
+        fprintf(stderr, "Error calculating fft.\n");
+        return -1;
+    }
+    cuda_error = cudaMemcpy((void *)image_bf, (void *)gpu_image_bf, sizeof(*image_bf)*rows*cols,
+                    cudaMemcpyDeviceToHost);
+    if (cuda_error != cudaSuccess) {
+        fprintf(stderr, "Unable to copy results from GPU to host. cuda error: %d\n", cuda_error);
+        return -1;
+    }
+    printf("\n");
+    cudaFree(gpu_image_bf);
 
     printf("writing.\n");
     write_fft(image_rf, rows, cols, FFT_R_FILENAME);
     write_fft(image_gf, rows, cols, FFT_G_FILENAME);
     write_fft(image_bf, rows, cols, FFT_B_FILENAME);
-
-    cudaFree(gpu_image_rf);
-    cudaFree(gpu_image_gf);
-    cudaFree(gpu_image_bf);
 
     free(image_r);
     free(image_g);
