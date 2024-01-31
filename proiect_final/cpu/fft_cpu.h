@@ -6,7 +6,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#include "shared_defs.h"
+#include "../shared_defs.h"
 
 int complex_fft(float *real, float *imag, const uint32_t N, const uint32_t index_multiplier) {
     float *a_real, *a_imag;

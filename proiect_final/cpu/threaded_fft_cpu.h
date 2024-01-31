@@ -7,7 +7,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#include "shared_defs.h"
+#include "../shared_defs.h"
 
 long greater_power_of_2(long num) {
     if (is_power_of_2(num)) {
