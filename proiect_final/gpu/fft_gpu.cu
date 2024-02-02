@@ -28,8 +28,8 @@ __global__ void complex_fft_iteration(float *real, float *imag, const uint32_t N
     for (int i = 1; i <= iterations; i++) {
         pow_2_i = 1 << i;
         u = n / (N/pow_2_i);
-        sin_u = sin(-2 * (u * pi / pow_2_i));
-        cos_u = cos(-2 * (u * pi / pow_2_i));
+        sin_u = sinf(-2 * (u * pi / pow_2_i));
+        cos_u = cosf(-2 * (u * pi / pow_2_i));
 
         a_real =
             real[(n + u*N/pow_2_i) % N * index_multiplier] +
