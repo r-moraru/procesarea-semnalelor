@@ -20,7 +20,7 @@
 int read_shape(uint32_t *rows, uint32_t *cols) {
     FILE *fileptr;
     size_t objects_read;
-    
+
     fileptr = fopen(SHAPE_FILENAME, "rb");
     if (fileptr == NULL) {
         fprintf(stderr, "unable to open file.");

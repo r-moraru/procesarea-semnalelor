@@ -1,5 +1,5 @@
-#include <stdio.h>
-#include <inttypes.h>
+#include <cstdio>
+#include <cinttypes>
 #include <cooperative_groups.h>
 
 #include "../shared_defs.h"
@@ -16,14 +16,14 @@ __device__ uint32_t kernel_log_of_pow_of_2(uint32_t num) {
     }
 }
 
-__global__ void complex_fft_iteration(float *real, float *imag, const uint32_t N,
+__device__ void complex_fft(float *real, float *imag, const uint32_t N,
                             const uint32_t index_multiplier) {
     int iterations = kernel_log_of_pow_of_2(N);
     float a_real, a_imag;
     uint32_t u, pow_2_i;
     float sin_u, cos_u;
     grid_group g = this_grid();
-    int n = g.thread_index().x;
+    int n = (blockIdx.x * blockDim.x + threadIdx.x) % N;
 
     for (int i = 1; i <= iterations; i++) {
         pow_2_i = 1 << i;
@@ -49,22 +49,13 @@ __global__ void complex_fft_iteration(float *real, float *imag, const uint32_t N
     }
 }
 
-void complex_fft(float *real, float *imag, const uint32_t N, const uint32_t index_multiplier) {
-    dim3 threads_per_block(min(1024, N), 1);
-    dim3 num_blocks(max(1, N/1024));
-    void *params[4];
-    params[0] = (void *)&real;
-    params[1] = (void *)&imag;
-    params[2] = (void *)&N;
-    params[3] = (void *)&index_multiplier;
-    cudaLaunchCooperativeKernel(complex_fft_iteration, num_blocks, threads_per_block, params, 0, cudaStreamDefault);
-}
-
-__global__ void untangle_and_pack(float *row1, float *row2, const uint32_t N,
+__device__ void untangle_and_pack(float *row1, float *row2, const uint32_t N,
                                   const uint32_t index_multiplier) {
     float Fr, Fi, Gr, Gi;
-    grid_group g = this_grid();
-    int i = g.thread_index().x+1;
+    int i = (blockIdx.x * blockDim.x + threadIdx.x) % N;
+    if (i == 0 || i >= N/2) {
+        return;
+    }
 
     Fr = (row1[i * index_multiplier] + row1[(N-i) * index_multiplier]) / 2;
     Fi = (row2[i * index_multiplier] - row2[(N-i) * index_multiplier]) / 2;
@@ -77,36 +68,33 @@ __global__ void untangle_and_pack(float *row1, float *row2, const uint32_t N,
     row2[(N-i) * index_multiplier] = Gi;
 }
 
-void real_pair_fft(float *row1, float *row2, const uint32_t len, const uint32_t index_multiplier) {
+__device__ void real_pair_fft(float *row1, float *row2, const uint32_t len, const uint32_t index_multiplier) {
     complex_fft(row1, row2, len, index_multiplier);
-    int N = len/2-1;
-    dim3 threads_per_block(min(1024, N), 1);
-    dim3 num_blocks(max(1, N/1024));
-    untangle_and_pack<<<num_blocks, threads_per_block>>>(row1, row2, len, index_multiplier);
+    untangle_and_pack(row1, row2, len, index_multiplier);
 }
 
-int matrix_fft(float *matrix, uint32_t rows, uint32_t cols) {
-    float startTime = (float)clock()/CLOCKS_PER_SEC, endTime;
-    if (!is_power_of_2(rows) || !is_power_of_2(cols)) {
-        fprintf(stderr, "The image dimensions must be a power of 2.\n");
-        return -1;
-    }
-
-    for (int row = 0; row < rows/2; row++) {
+__global__ void row_fft(float *matrix, const uint32_t rows, const uint32_t cols) {
+    int row;
+    for (int i = blockIdx.x * blockDim.x + threadIdx.x; 
+         i < rows*(cols/2); 
+         i += blockDim.x * gridDim.x) {
+        row = i / cols;
         real_pair_fft(matrix + row*cols, matrix + (row+rows/2)*cols, cols, 1);
-
     }
+}
 
-    real_pair_fft(matrix, matrix + cols/2, rows, cols);
-
-    for (int col = 1; col < cols/2; col++) {
-        complex_fft(matrix + col, matrix + cols-col, rows, cols);
+__global__ void col_fft(float *matrix, const uint32_t rows, const uint32_t cols) {
+    int col;
+    for (int i = blockIdx.x * blockDim.x + threadIdx.x; 
+         i < rows*(cols/2);
+         i += blockDim.x * gridDim.x) {
+        col = i / rows;
+        if (col == 0) {
+            real_pair_fft(matrix, matrix + cols/2, rows, cols);
+        } else {
+            complex_fft(matrix + col, matrix + cols-col, rows, cols);
+        }
     }
-
-    endTime = (float)clock()/CLOCKS_PER_SEC;
-    cudaDeviceSynchronize();
-    printf("%d by %d image FFT calculated in %f seconds.\n", rows, cols, endTime-startTime);
-    return 0;
 }
 
 float *copy_matrix_to_gpu(float *host_matrix, int32_t rows, int32_t cols) {
@@ -125,6 +113,63 @@ float *copy_matrix_to_gpu(float *host_matrix, int32_t rows, int32_t cols) {
     }
 
     return (float *)gpu_matrix;
+}
+
+int matrix_fft(float *host_matrix, uint32_t rows, uint32_t cols) {
+    float startTime, endTime;
+    int devId;
+    int numSMs;
+    int maxThreads;
+
+    if (!is_power_of_2(rows) || !is_power_of_2(cols)) {
+        fprintf(stderr, "The image dimensions must be a power of 2.\n");
+        return -1;
+    }
+
+    cudaGetDevice(&devId);
+    cudaDeviceGetAttribute(&numSMs, cudaDevAttrMultiProcessorCount, devId);
+    cudaDeviceGetAttribute(&maxThreads, cudaDevAttrMaxThreadsPerBlock, devId);
+    if (rows > numSMs*maxThreads || cols > numSMs*maxThreads) {
+        fprintf(stderr, "Image size too large to execute under a cooperative group"
+                "(max size per dimension: %d)\n", numSMs*maxThreads);
+        return -1;
+    }
+
+    float *matrix;
+    if ((matrix = copy_matrix_to_gpu(host_matrix, rows, cols)) == NULL) {
+        return -1;
+    }
+
+    dim3 grid_dim(min(32, max(1, (rows*cols/2)/1024)), 1);
+    dim3 block_dim(min(1024, rows*cols/2), 1);
+    void *params[3];
+    params[0] = (void *)&matrix;
+    params[1] = (void *)&rows;
+    params[2] = (void *)&cols;
+
+    startTime = (float)clock()/CLOCKS_PER_SEC;
+    cudaLaunchCooperativeKernel(row_fft, grid_dim, block_dim, params, 0, cudaStreamDefault);
+    cudaDeviceSynchronize();
+    cudaLaunchCooperativeKernel(col_fft, grid_dim, block_dim, params, 0, cudaStreamDefault);
+    cudaDeviceSynchronize();
+    cudaError_t cuda_error = cudaGetLastError();
+    if (cuda_error != cudaSuccess) {
+        printf(cudaGetErrorString(cuda_error));
+        return -1;
+    }
+
+    endTime = (float)clock()/CLOCKS_PER_SEC;
+    printf("%d by %d image FFT calculated in %f seconds.\n", rows, cols, endTime-startTime);
+
+    cuda_error = cudaMemcpy((void *)host_matrix, (void *)matrix, sizeof(*matrix)*rows*cols,
+                    cudaMemcpyDeviceToHost);
+    if (cuda_error != cudaSuccess) {
+        fprintf(stderr, "Unable to copy results from GPU to host. cuda error: %d\n", cuda_error);
+        return -1;
+    }
+    cudaFree(matrix);
+
+    return 0;
 }
 
 int main() {
@@ -178,57 +223,13 @@ int main() {
         }
     }
 
-    float *gpu_image_rf, *gpu_image_gf, *gpu_image_bf;
-
-    if ((gpu_image_rf = copy_matrix_to_gpu(image_rf, rows, cols)) == NULL) {
-        return -1;
-    }
     printf("GPU FFT:\n");
-    if (matrix_fft(gpu_image_rf, rows, cols) != 0) {
+    if (matrix_fft(image_rf, rows, cols) != 0 ||
+            matrix_fft(image_gf, rows, cols) != 0 ||
+            matrix_fft(image_bf, rows, cols) != 0) {
         fprintf(stderr, "Error calculating fft.\n");
         return -1;
     }
-    cudaError_t cuda_error = cudaMemcpy((void *)image_rf, (void *)gpu_image_rf, sizeof(*image_rf)*rows*cols,
-                    cudaMemcpyDeviceToHost);
-    if (cuda_error != cudaSuccess) {
-        fprintf(stderr, "Unable to copy results from GPU to host. cuda error: %d\n", cuda_error);
-        return -1;
-    }
-    printf("\n");
-    cudaFree(gpu_image_rf);
-
-    if ((gpu_image_gf = copy_matrix_to_gpu(image_gf, rows, cols)) == NULL) {
-        return -1;
-    }
-    if (matrix_fft(gpu_image_gf, rows, cols) != 0) {
-        fprintf(stderr, "Error calculating fft.\n");
-        return -1;
-    }
-    
-    cuda_error = cudaMemcpy((void *)image_gf, (void *)gpu_image_gf, sizeof(*image_gf)*rows*cols,
-                    cudaMemcpyDeviceToHost);
-    if (cuda_error != cudaSuccess) {
-        fprintf(stderr, "Unable to copy results from GPU to host. cuda error: %d\n", cuda_error);
-        return -1;
-    }
-    printf("\n");
-    cudaFree(gpu_image_gf);
-
-    if ((gpu_image_bf = copy_matrix_to_gpu(image_bf, rows, cols)) == NULL) {
-        return -1;
-    }
-    if (matrix_fft(gpu_image_bf, rows, cols) != 0) {
-        fprintf(stderr, "Error calculating fft.\n");
-        return -1;
-    }
-    cuda_error = cudaMemcpy((void *)image_bf, (void *)gpu_image_bf, sizeof(*image_bf)*rows*cols,
-                    cudaMemcpyDeviceToHost);
-    if (cuda_error != cudaSuccess) {
-        fprintf(stderr, "Unable to copy results from GPU to host. cuda error: %d\n", cuda_error);
-        return -1;
-    }
-    printf("\n");
-    cudaFree(gpu_image_bf);
 
     printf("writing.\n");
     write_fft(image_rf, rows, cols, FFT_R_FILENAME);
