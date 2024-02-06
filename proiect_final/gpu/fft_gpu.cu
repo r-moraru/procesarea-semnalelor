@@ -118,7 +118,7 @@ float *copy_matrix_to_gpu(float *host_matrix, int32_t rows, int32_t cols) {
 int matrix_fft(float *host_matrix, uint32_t rows, uint32_t cols) {
     float startTime, endTime;
     int devId;
-    int numSMs;
+    int numSMs, maxBlocks;
     int maxThreads;
 
     if (!is_power_of_2(rows) || !is_power_of_2(cols)) {
@@ -134,13 +134,16 @@ int matrix_fft(float *host_matrix, uint32_t rows, uint32_t cols) {
                 "(max size per dimension: %d)\n", numSMs*maxThreads);
         return -1;
     }
+    // number of SMs reduces to smaller power of two in order to avoid having
+    // out of bounds threads when processing the matrix.
+    maxBlocks = greater_power_of_2(numSMs) >> 1;
 
     float *matrix;
     if ((matrix = copy_matrix_to_gpu(host_matrix, rows, cols)) == NULL) {
         return -1;
     }
 
-    dim3 grid_dim(min(32, max(1, (rows*cols/2)/1024)), 1);
+    dim3 grid_dim(min(maxBlocks, max(1, (rows*cols/2)/1024)), 1);
     dim3 block_dim(min(1024, rows*cols/2), 1);
     void *params[3];
     params[0] = (void *)&matrix;

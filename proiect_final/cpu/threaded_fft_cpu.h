@@ -9,20 +9,6 @@
 
 #include "../shared_defs.h"
 
-long greater_power_of_2(long num) {
-    if (is_power_of_2(num)) {
-        return num << 1;
-    }
-    uint32_t last_1_pos = 0;
-    for (int i = 0; i < 32; i++) {
-        if (num & 1) {
-            last_1_pos = i;
-        }
-        num >>= 1;
-    }
-    return 1 << (last_1_pos+1);
-}
-
 long closest_power_of_2(long num) {
     if (is_power_of_2(num)) {
         return num;
